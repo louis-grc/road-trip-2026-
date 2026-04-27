@@ -1,0 +1,19 @@
+# Cloudflare Workers Static Assets ignore — gitignore-style.
+# Excludes non-runtime files from the Pages/Workers deploy.
+
+.git
+.git/**
+.gitignore
+.assetsignore
+.DS_Store
+__pycache__
+__pycache__/**
+*.py
+*.pyc
+*.log
+*.kml
+*.md
+trip.ics
+wrangler.jsonc
+node_modules
+node_modules/**
