@@ -1,0 +1,16 @@
+# Logs
+*.log
+
+# User's exported routes (private)
+*.kml
+trip.ics
+
+# OS / editor cruft
+.DS_Store
+__pycache__/
+*.pyc
+.claude/
+
+# Local-only stuff
+fuel_download.log
+alps_download.log
