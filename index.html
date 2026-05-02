@@ -351,8 +351,12 @@
                     <input type="range" id="wDetour" min="1.5" max="6" step="0.5" value="4.0" style="flex:1;">
                     <span id="wDetourVal" style="width:28px;text-align:right;color:#2ecc71;">4.0×</span>
                 </label>
+                <label style="font-size:0.78rem;color:#c0c0d8;display:flex;align-items:center;gap:8px;margin-top:4px;cursor:pointer;">
+                    <input type="checkbox" id="wAvoidHighways" checked style="margin:0;cursor:pointer;">
+                    <span>&#128683; Avoid autoroutes / primary highways</span>
+                </label>
             </div>
-            <div style="font-size:0.65rem;color:#666;margin-top:6px;">Re-routes scenic legs when you release a slider.</div>
+            <div style="font-size:0.65rem;color:#666;margin-top:6px;">Re-routes scenic legs when you release a slider or toggle.</div>
         </div>
         <div class="routing-loading" id="routingLoading">
             <div class="spinner"></div>
@@ -695,10 +699,17 @@ function valhallaCosting(pref) {
     // private_access_penalty: 9999 = effectively blocks private roads
     // gate_penalty: 600 = heavily penalize gated roads (often private)
     var base = { width:1.8, private_access_penalty:9999, gate_penalty:600 };
-    if (pref==='trails') return Object.assign(base, { use_highways:0.0, use_trails:0.8, use_toll_roads:0.0, top_speed:60, exclude_unpaved:false });
-    if (pref==='twisty') return Object.assign(base, { use_highways:0.0, use_trails:0.5, use_toll_roads:0.0, top_speed:90, exclude_unpaved:false });
-    if (pref==='balanced') return Object.assign(base, { use_highways:0.3, use_trails:0.3, use_toll_roads:0.2, top_speed:110, exclude_unpaved:false });
-    return Object.assign(base, { use_highways:0.8, use_trails:0.0, top_speed:120, exclude_unpaved:true }); // fast
+    var costing;
+    if (pref==='trails') costing = Object.assign(base, { use_highways:0.0, use_trails:0.8, use_toll_roads:0.0, top_speed:60, exclude_unpaved:false });
+    else if (pref==='twisty') costing = Object.assign(base, { use_highways:0.0, use_trails:0.5, use_toll_roads:0.0, top_speed:90, exclude_unpaved:false });
+    else if (pref==='balanced') costing = Object.assign(base, { use_highways:0.3, use_trails:0.3, use_toll_roads:0.2, top_speed:110, exclude_unpaved:false });
+    else costing = Object.assign(base, { use_highways:0.8, use_trails:0.0, top_speed:120, exclude_unpaved:true }); // fast
+    // Force-avoid highways/tolls when the user explicitly toggled it on
+    if (window.scoringWeights && window.scoringWeights.avoidHighways) {
+        costing.use_highways = 0.0;
+        costing.use_toll_roads = 0.0;
+    }
+    return costing;
 }
 
 // Fetch route from Valhalla motorcycle
@@ -1459,6 +1470,19 @@ function scoreEdgeTags(tags) {
     if (tags.ref && tags.ref.match(/^[NE]/)) loneliness -= 4;
     if (mode === 'twisty' && tags.ref && tags.ref.match(/^D\d/)) beauty += 2;
 
+    // Avoid-highways toggle: huge negative bias on highway-class roads. Motorway/trunk
+    // are already excluded at the Overpass query level; primary is included and may
+    // still be selected by routing. This drops it to floor cost.
+    if (window.scoringWeights && window.scoringWeights.avoidHighways) {
+        if (hw === 'motorway' || hw === 'motorway_link' ||
+            hw === 'trunk' || hw === 'trunk_link' ||
+            hw === 'primary' || hw === 'primary_link') {
+            beauty -= 30;
+        }
+        // Honor explicit toll tag too — autoroutes are tolled in France
+        if (tags.toll === 'yes') beauty -= 30;
+    }
+
     return beauty + loneliness;
 }
 
@@ -1497,7 +1521,9 @@ var scoringWeights = {
     pano:   1.0,   // 0..2 : reward POI proximity
     track:  0.0,   // -1 (prefer tar) .. +1 (prefer track); 0 = neutral
     detour: 4,     // max detour factor (as multiple of straight-line dist)
+    avoidHighways: true, // bool : avoid motorways/trunks/primary + tolls (default ON for moto)
 };
+window.scoringWeights = scoringWeights; // expose for valhallaCosting() to read
 
 // ── Compose final edge score from stored components + current weights ──
 // Higher score = more desirable edge. Cost = length / score².
@@ -3037,6 +3063,18 @@ document.querySelectorAll('.pref-btn').forEach(function(btn){btn.addEventListene
             recalcAllRoutes();
         });
     });
+
+    // Avoid-highways toggle: same recalc flow but it's a boolean
+    var avoidEl = document.getElementById('wAvoidHighways');
+    if (avoidEl) {
+        avoidEl.addEventListener('change', function() {
+            scoringWeights.avoidHighways = avoidEl.checked;
+            console.log('[scoringWeights] avoidHighways =', scoringWeights.avoidHighways);
+            if (window._currentGraph) recomputeGraphScores(window._currentGraph);
+            Object.keys(routeCache).forEach(function(k){ delete routeCache[k]; });
+            recalcAllRoutes();
+        });
+    }
 })();
 
 // ════════════════════════════════════════════
