@@ -3999,22 +3999,42 @@ document.getElementById('saveGPX').addEventListener('click', function() {
         gpx += '  </wpt>\n';
     });
 
-    // Route tracks — each leg as a separate <trk>, each surface segment as <trkseg>
+    // Route tracks — each leg as a separate <trk>. Each surface segment becomes one
+    // <trkseg> with a surface-name XML comment. Approach stubs are emitted as extra
+    // trkseg's at the start/end so the imported track is continuous from waypoint A
+    // to waypoint B (matching the KML export — no gaps at leg boundaries).
     itinRoutes.forEach(function(route, i) {
         if (!route) return;
         var fromWp = getWaypoint(itinerary[i]);
         var toWp = getWaypoint(itinerary[i + 1]);
-        var legName = (fromWp ? fromWp.name : '?') + ' to ' + (toWp ? toWp.name : '?');
-        var legNameSafe = legName.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        var legNameRaw = (fromWp ? fromWp.name : '?') + ' → ' + (toWp ? toWp.name : '?');
+        var legNameSafe = ('Leg ' + (i+1) + ': ' + legNameRaw).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
         var km = route.distance ? (route.distance / 1000).toFixed(1) : '?';
         var ss = route.surfaceStats || {};
+        var legDesc = km + ' km | tar ' + (ss.pavedPct||0) + '% | track ' +
+                      ((ss.dirtPct||0) + (ss.trailPct||0)) + '% | doubt ' + (ss.warnPct||0) + '%' +
+                      (ss.wrongwayPct > 0 ? ' | WRONG-WAY ' + ss.wrongwayPct + '%' : '') +
+                      (route.wrongWaySegs > 0 ? ' (' + route.wrongWaySegs + ' seg, ' + Math.round((route.wrongWayKm||0)*1000) + ' m)' : '');
 
         gpx += '  <trk>\n';
         gpx += '    <name>' + legNameSafe + '</name>\n';
-        gpx += '    <desc>' + km + 'km | trail ' + (ss.trailPct||0) + '% | dirt ' + (ss.dirtPct||0) + '% | paved ' + (ss.pavedPct||0) + '%</desc>\n';
+        gpx += '    <desc>' + legDesc.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</desc>\n';
 
-        // Use coloredSegments for the most accurate output (each surface type = one trkseg)
         if (route.coloredSegments && route.coloredSegments.length > 0) {
+            // Approach stub at start (waypoint → first coord of route) — only if there's a gap
+            var fs = route.coloredSegments[0];
+            if (fromWp && fs && fs.latlngs.length > 0) {
+                var fll = fs.latlngs[0];
+                var fromGap = haversine(fromWp.lat, fromWp.lng, fll[0], fll[1]);
+                if (fromGap > 0.05) {
+                    gpx += '    <trkseg>\n';
+                    gpx += '      <!-- surface: stub -->\n';
+                    gpx += '      <trkpt lat="' + fromWp.lat + '" lon="' + fromWp.lng + '"></trkpt>\n';
+                    gpx += '      <trkpt lat="' + fll[0] + '" lon="' + fll[1] + '"></trkpt>\n';
+                    gpx += '    </trkseg>\n';
+                }
+            }
+            // Each surface-colored segment as its own trkseg
             route.coloredSegments.forEach(function(seg) {
                 gpx += '    <trkseg>\n';
                 gpx += '      <!-- surface: ' + seg.surface + ' -->\n';
@@ -4023,8 +4043,30 @@ document.getElementById('saveGPX').addEventListener('click', function() {
                 });
                 gpx += '    </trkseg>\n';
             });
+            // Approach stub at end (last coord of route → waypoint) — only if there's a gap
+            var ls = route.coloredSegments[route.coloredSegments.length - 1];
+            if (toWp && ls && ls.latlngs.length > 0) {
+                var lll = ls.latlngs[ls.latlngs.length - 1];
+                var toGap = haversine(toWp.lat, toWp.lng, lll[0], lll[1]);
+                if (toGap > 0.05) {
+                    gpx += '    <trkseg>\n';
+                    gpx += '      <!-- surface: stub -->\n';
+                    gpx += '      <trkpt lat="' + lll[0] + '" lon="' + lll[1] + '"></trkpt>\n';
+                    gpx += '      <trkpt lat="' + toWp.lat + '" lon="' + toWp.lng + '"></trkpt>\n';
+                    gpx += '    </trkseg>\n';
+                }
+            }
         } else if (route.coords && route.coords.length > 0) {
-            // Fallback: single segment from coords
+            // Fallback: single trkseg from coords, with stubs to bridge the gap
+            if (fromWp) {
+                var first = route.coords[0];
+                if (haversine(fromWp.lat, fromWp.lng, first.lat, first.lng) > 0.05) {
+                    gpx += '    <trkseg>\n      <!-- surface: stub -->\n';
+                    gpx += '      <trkpt lat="' + fromWp.lat + '" lon="' + fromWp.lng + '"></trkpt>\n';
+                    gpx += '      <trkpt lat="' + first.lat + '" lon="' + first.lng + '"></trkpt>\n';
+                    gpx += '    </trkseg>\n';
+                }
+            }
             gpx += '    <trkseg>\n';
             route.coords.forEach(function(c) {
                 gpx += '      <trkpt lat="' + c.lat + '" lon="' + c.lng + '">';
@@ -4032,6 +4074,15 @@ document.getElementById('saveGPX').addEventListener('click', function() {
                 gpx += '</trkpt>\n';
             });
             gpx += '    </trkseg>\n';
+            if (toWp) {
+                var last = route.coords[route.coords.length - 1];
+                if (haversine(toWp.lat, toWp.lng, last.lat, last.lng) > 0.05) {
+                    gpx += '    <trkseg>\n      <!-- surface: stub -->\n';
+                    gpx += '      <trkpt lat="' + last.lat + '" lon="' + last.lng + '"></trkpt>\n';
+                    gpx += '      <trkpt lat="' + toWp.lat + '" lon="' + toWp.lng + '"></trkpt>\n';
+                    gpx += '    </trkseg>\n';
+                }
+            }
         }
         gpx += '  </trk>\n';
     });
