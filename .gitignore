@@ -14,3 +14,10 @@ __pycache__/
 # Local-only stuff
 fuel_download.log
 alps_download.log
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
